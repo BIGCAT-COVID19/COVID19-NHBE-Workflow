@@ -3,9 +3,11 @@
 Pathway and network analysis workflow using WikiPathways and the COVID19 Disease Map.
 
 **R workflow**
+
 Workflow_PathwayNetworkAnalysis.Rmd
 
 **Data**
+
 Transcriptomics data
 * NHBE mock treated vs SARS-CoV-2 infected: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE147507
 * Blanco-Melo, Daniel, et al. "Imbalanced host response to SARS-CoV-2 drives development of COVID-19." Cell 181.5 (2020): 1036-1045.
