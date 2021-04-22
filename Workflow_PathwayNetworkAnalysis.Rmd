@@ -1,0 +1,358 @@
+---
+title: 'COVID19 WikiPathways & DiseaseMap pathway and network analysis'
+author: "Finterly Hu, Martina Summer-Kutmon"
+date: "10 Feb 2021"
+comment: "adapted from Alexander Pico's Pathway Analysis Vignette"
+version: 1.0
+---
+
+# General instructions (read before running the code snippets)
+* This script contains six code snippets from pre-processing to pathway analysis to pathway visualization, crosstalk and network analysis. The steps should be run one after the other. 
+* Make sure all the required packages are installed beforehand (BiocManager::install(...)). 
+* Make sure you have Cytoscape installed (version 3.8.0+) and running before you start running the script. 
+
+# Setup
+
+Loading libraries
+```{r}
+library(readr)
+library(DESeq2)
+library(here)
+library(dplyr)
+library(tibble)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(tidyverse)
+library(rWikiPathways)
+library(RCy3)
+library(RColorBrewer)
+library(EnhancedVolcano)
+library(readr)
+library(reshape)
+library(data.table)
+```
+
+Setup
+```{r}
+setwd(here())
+```
+
+
+# Load dataset
+
+We take the series 1 from the following dataset (NHBE mock treated versus SARS-CoV-2 infected): 
+* https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE147507
+
+which is related to the following publication:
+
+Blanco-Melo, Daniel, et al. "Imbalanced host response to SARS-CoV-2 drives development of COVID-19." Cell 181.5 (2020): 1036-1045.
+
+```{r}
+GSE147507_raw_counts <- read.csv("data/GSE147507_RawReadCounts_Human.tsv", sep = "\t")
+
+NHBEvsCOV2.df <- GSE147507_raw_counts[,c(2:7)]
+row.names(NHBEvsCOV2.df) <- GSE147507_raw_counts$X
+
+NHBEvsCOV2.targets <- as.data.frame(matrix(NA,length(names(NHBEvsCOV2.df)),1))
+names(NHBEvsCOV2.targets) <- c("condition")
+row.names(NHBEvsCOV2.targets) <- names(NHBEvsCOV2.df)
+NHBEvsCOV2.targets$condition <- gsub("Series1_", "", row.names(NHBEvsCOV2.targets))
+NHBEvsCOV2.targets$condition <- factor(gsub("_[1-3]$", "", NHBEvsCOV2.targets$condition))
+
+NHBEvsCOV2.dds <- DESeqDataSetFromMatrix(countData = as.matrix(NHBEvsCOV2.df),colData = NHBEvsCOV2.targets, design = ~ condition)
+## Set control
+NHBEvsCOV2.dds$condition <- relevel(NHBEvsCOV2.dds$condition, ref = levels(NHBEvsCOV2.targets$condition)[1])
+## Carry out diff exp
+NHBEvsCOV2.dds <- DESeq(NHBEvsCOV2.dds)
+## See the comparisons carried out
+NHBEvsCOV.comp <- resultsNames(NHBEvsCOV2.dds)
+## Get results table
+NHBEvsCOV.res <- results(NHBEvsCOV2.dds, name=NHBEvsCOV.comp[2])
+
+NHBEvsCOV.res.df <- as.data.frame(NHBEvsCOV.res) %>% 
+    tibble::rownames_to_column(var = "GeneID") %>% 
+    dplyr::select(c(GeneID, log2FoldChange, pvalue, padj, stat)) %>% 
+    tibble::column_to_rownames(var = "GeneID") 
+
+NHBEvsCOV.res.df <- setDT(NHBEvsCOV.res.df, keep.rownames = TRUE)[]
+colnames(NHBEvsCOV.res.df)[1] <- "GeneID"
+
+svg('figures/vulcanoplot.svg')
+EnhancedVolcano(NHBEvsCOV.res.df, title = "NHBE cell line", lab = NHBEvsCOV.res.df$GeneID, x = 'log2FoldChange', y = 'pvalue', pCutoff = 0.05, FCcutoff = 0.585)
+dev.off()
+png('figures/vulcanoplot.png')
+EnhancedVolcano(NHBEvsCOV.res.df, title = "NHBE cell line", lab = NHBEvsCOV.res.df$GeneID, x = 'log2FoldChange', y = 'pvalue', pCutoff = 0.05, FCcutoff = 0.585)
+dev.off()
+
+# identifier mapping 
+hgcn2entrez <- clusterProfiler::bitr(NHBEvsCOV.res.df$GeneID, fromType = "SYMBOL",toType = c("ENTREZID","SYMBOL","ENSEMBL"), OrgDb = org.Hs.eg.db)
+data <- merge(NHBEvsCOV.res.df, hgcn2entrez, by.x="GeneID", by.y="SYMBOL", all.x = TRUE)
+data <- subset(data, select=c(6,1:5,7))
+
+# filter genes without Entrez Gene identifier
+data.NHBE <- data %>% tidyr::drop_na(ENTREZID)
+colnames(data.NHBE)[2] <- "GeneName"
+colnames(data.NHBE)[1] <- "GeneId"
+
+write.table(data.NHBE, file="output/DEG_Data.txt", sep="\t", quote=FALSE, row.names = FALSE)
+```
+
+
+# Pathway enrichment
+
+Pathway enrichment is performed with the gene sets of WikiPathways and the COVID-19 Disease Map maps.
+
+```{r}
+deg <- unique(data.NHBE[!is.na(data.NHBE$pvalue) & data.NHBE$pvalue < 0.05 & abs(data.NHBE$log2FoldChange) > 0.58,c(1,2)])
+
+bkgd.genes <- unique(data.NHBE[,c(1,2)])
+
+# combine WikiPathways and COVID19 Disease Map gene sets
+wp2gene <- readPathwayGMT("data/wikipathways-20210110-gmt-Homo_sapiens.gmt")
+dm2gene <- readPathwayGMT("data/dm_genesets.gmt")
+pwy2gene <- dplyr::bind_rows(wp2gene, dm2gene)
+
+wpid2gene <- pwy2gene %>% dplyr::select(wpid,gene) #TERM2GENE
+wpid2name <- pwy2gene %>% dplyr::select(wpid,name) #TERM2NAME
+
+ewp <- clusterProfiler::enricher(
+  deg$GeneId,
+  universe = bkgd.genes$GeneId,
+  pAdjustMethod = "fdr",
+  pvalueCutoff = 0.05,
+  TERM2GENE = wpid2gene,
+  TERM2NAME = wpid2name)
+
+ewp.res <- as.data.frame(ewp) 
+
+# export enrichment result
+svg('figures/barplot.svg', width = 800, height=1000)
+barplot(ewp, showCategory = 45)
+dev.off()
+png('figures/barplot.png', width = 800, height=1000)
+barplot(ewp, showCategory = 45)
+dev.off()
+
+write.table(ewp.res, file="output/enrich_res.txt", sep="\t", quote=FALSE, row.names = FALSE)
+```
+
+
+# Pathway data visualization
+
+The pathways can then be visualized with the gene expression data as shown with the 
+"Type I Interferon Induction and Signaling During SARS-CoV-2 Infection" (WP4868) pathway from the WikiPathways COVID-19 portal. 
+
+```{r}
+RCy3::commandsRun('wikipathways import-as-pathway id=WP4868') 
+toggleGraphicsDetails()
+loadTableData(data.NHBE, data.key.column = "ENSEMBL", table.key.column = "Ensembl")
+
+# apply visual style 
+data.values = c(-1,0,1) 
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+setNodeColorMapping("log2FoldChange", data.values, node.colors, default.color = "#D8D8D8", style.name = "WikiPathways")
+
+RCy3::setVisualStyle("WikiPathways")
+
+# Saving output
+svg.file <- file.path(getwd(), "figures/PathwayVisualization.svg")
+exportImage(svg.file,'SVG')
+png.file <- file.path(getwd(), "figures/PathwayVisualization.png")
+exportImage(png.file,'PNG', zoom = 500)
+cys.file <- file.path(getwd(), "output/PathwayVisualization.cys")
+saveSession(cys.file) 
+
+#comment following line if you want to manipulate the visualization in Cytoscape
+RCy3::closeSession(save.before.closing = F)
+```
+
+
+# Pathway overlap visualization
+
+There is often crosstalk and overlap between pathways enriched in gene expression analyses. The following step visualizes the overlap between the enriched pathways in a pathway-gene network. 
+
+The genes not present in any pathway are included in the visualization but can be filtered in a follow-up step if preferred. 
+
+```{r}
+pwy <- unique(ewp.res[,c(1,2)])
+colnames(pwy) <- c("id","label")
+pwy$type <- 'pathway'
+
+edges <- wpid2gene[wpid2gene$wpid %in% pwy$id,]
+colnames(edges) <- c("source", "target")
+
+genes <- unique(deg)
+colnames(genes) <- c("id","label")
+genes$type <- 'gene'
+
+edges <- unique(edges[edges$target %in% genes$id,])
+
+nodes <- dplyr::bind_rows(genes, pwy)
+rownames(nodes) <- NULL
+
+createNetworkFromDataFrames(nodes=nodes,edges=edges,title="Pathway-Gene-Associations", collection="PathwayGeneCrosstalk")
+
+loadTableData(data.NHBE, data.key.column = "GeneId", table.key.column = "id")
+
+# Visual style
+RCy3::copyVisualStyle("default","wp.vis")
+
+RCy3::setNodeLabelMapping("label", style.name="wp.vis")
+RCy3::lockNodeDimensions(TRUE, style.name="wp.vis")
+RCy3::setNodeShapeMapping('type', c('gene','pathway'), c("ellipse","hexagon"), style.name="wp.vis")
+RCy3::setNodeSizeMapping('type', c('gene','pathway'), c(40,25), mapping.type = "d", style.name = "wp.vis")
+data.values<-c(-1,0,1) 
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+setNodeColorMapping("log2FoldChange", data.values, node.colors, default.color = "#99FF99", style.name = "wp.vis")
+
+RCy3::setVisualStyle("wp.vis")
+
+# Saving output
+svg.file <- file.path(getwd(), "figures/PathwayCrosstalk.svg")
+exportImage(svg.file,'SVG')
+png.file <- file.path(getwd(), "figures/PathwayCrosstalk.png")
+exportImage(png.file,'PNG', zoom = 500)
+cys.file <- file.path(getwd(), "output/PathwayCrosstalk.cys")
+saveSession(cys.file) 
+
+#comment following line if you want to manipulate the visualization in Cytoscape
+RCy3::closeSession(save.before.closing = F)
+```
+
+
+# Drug-target extension
+Drug-target information is extracted from DrugBank
+Wishart DS, Knox C, Guo AC, Shrivastava S, Hassanali M, Stothard P, Chang Z, Woolsey J. Drugbank: a comprehensive resource for in silico drug discovery and exploration. Nucleic Acids Res. 2006 Jan 1;34 (Database issue):D668-72. 16381955.
+
+Please check the DrugBank license information
+https://go.drugbank.com/legal/terms_of_use
+
+License: 
+https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+```{r}
+pwy <- unique(ewp.res[,c(1,2)])
+colnames(pwy) <- c("id","label")
+pwy$type <- 'pathway'
+
+edges <- wpid2gene[wpid2gene$wpid %in% pwy$id,]
+colnames(edges) <- c("source", "target")
+
+genes <- unique(deg)
+colnames(genes) <- c("id","label")
+genes$type <- 'gene'
+
+edges <- edges[edges$target %in% genes$id,]
+
+nodes <- dplyr::bind_rows(genes, pwy)
+rownames(nodes) <- NULL
+
+createNetworkFromDataFrames(nodes=nodes,edges=edges,title="Gene-drug interactions", collection="drug-target")
+
+drugbank <- file.path(getwd(), "data/drugbank-5.1.7.xgmml")
+
+
+# run CyTargetLinker
+commandsRun(paste0('cytargetlinker extend idAttribute="id" linkSetFiles="', drugbank, '"'))
+commandsRun('cytargetlinker applyLayout network="current"')
+
+drug <- read.delim2("data/drugNodes-5.1.7.txt", stringsAsFactors=TRUE)
+loadTableData(drug, data.key.column="Identifier", table.key.column="id")
+loadTableData(data.NHBE, data.key.column = "GeneId", table.key.column = "id")
+
+# Visual style
+RCy3::copyVisualStyle("default","wp.vis")
+RCy3::setNodeLabelMapping("label", style.name="wp.vis")
+RCy3::lockNodeDimensions(TRUE, style.name="wp.vis")
+RCy3::setNodeShapeMapping('type', c('gene','pathway','drug'), c("ellipse","rectangle","hexagon"), style.name="wp.vis")
+RCy3::setNodeSizeMapping('type', c('gene','pathway'), c(40,25), mapping.type = "d", style.name = "wp.vis")
+data.values = c(-1,0,1) 
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+data.values<-c(-1,0,1) 
+setNodeColorMapping("log2FoldChange", data.values, node.colors, default.color = "#99FF99", style.name = "wp.vis")
+
+RCy3::setVisualStyle("wp.vis")
+
+my.drugs <- selectNodes("drug", by.col = "CTL.Type", preserve = FALSE)$nodes 
+clearSelection()
+setNodeColorBypass(my.drugs, "#DD99FF")
+
+# Saving output
+svg.file <- file.path(getwd(), "figures/DrugExtension.svg")
+exportImage(svg.file,'SVG')
+png.file <- file.path(getwd(), "figures/DrugExtension.png")
+exportImage(png.file,'PNG', zoom = 500)
+cys.file <- file.path(getwd(), "output/DrugExtension.cys")
+saveSession(cys.file) 
+
+#comment following line if you want to manipulate the visualization in Cytoscape
+RCy3::closeSession(save.before.closing = F)
+```
+
+# PPI network analysis - MINERVA pathways (COVID 19 Disease Map)
+
+```{r}
+x <- format_csv(as.data.frame(deg$GeneId), col_names=F, quote_escape = "double", eol =",")
+commandsRun(paste0('string protein query cutoff=0.9 newNetName="PPI network" query="',x,'" limit=0'))
+
+# Saving output
+svg.file <- file.path(getwd(), "figures/PPI-Network.svg")
+exportImage(svg.file,'SVG')
+png.file <- file.path(getwd(), "figures/PPI-Network.png")
+exportImage(png.file,'PNG', zoom = 500)
+
+proteins <- RCy3::getTableColumns(columns=c("query term", "display name"))
+ppis <- RCy3::getTableColumns(table="edge", columns=c("name"))
+ppis <- data.frame(do.call('rbind', strsplit(as.character(ppis$name),' (pp) ',fixed=TRUE)))
+ppis.2 <- merge(ppis, proteins, by.x="X1", by.y="display name", all.x=T)
+colnames(ppis.2) <- c("s", "t", "source")
+ppis.3 <- merge(ppis.2, proteins, by.x="t", by.y="display name", all.x=T)
+colnames(ppis.3)[4] <-"target"
+ppis.3$interaction <- "PPI"
+
+colnames(proteins) <- c("id","label")
+proteins$type <- "protein"
+
+pwy.covid <- rWikiPathways::getPathwayIdsByCurationTag("Curation:COVID19")
+pwy2gene.minerva <- pwy2gene[(grepl("MINERVA", pwy2gene$name) | pwy2gene$wpid %in% pwy.covid) & pwy2gene$gene %in% deg$GeneId,]
+colnames(pwy2gene.minerva)[3] <- c("source")
+colnames(pwy2gene.minerva)[5] <- c("target")
+pwy2gene.minerva$interaction <- "Pathway-Gene"
+
+pwy.filtered <- unique(pwy2gene[(grepl("MINERVA", pwy2gene$name) | pwy2gene$wpid %in% pwy.covid),c(1,3)])
+colnames(pwy.filtered) <- c("label", "id")
+pwy.filtered$type <- "pathway"
+
+nodes.ppi <- dplyr::bind_rows(genes,pwy.filtered)
+rownames(nodes.ppi) <- NULL
+edges.ppi <- unique(dplyr::bind_rows(ppis.3[,c(3,4,5)], pwy2gene.minerva[,c(3,5,6)]))
+rownames(edges.ppi) <- NULL
+
+RCy3::createNetworkFromDataFrames(nodes= nodes.ppi, edges = edges.ppi, title="PPI-Pathway-Network2", collection="new")
+loadTableData(nodes.ppi, data.key.column = "id", table="node", table.key.column = "id")
+loadTableData(data.NHBE, data.key.column = "GeneId", table.key.column = "id")
+
+# Visual style
+RCy3::copyVisualStyle("default","wp.vis")
+RCy3::setNodeLabelMapping("label", style.name="wp.vis")
+RCy3::lockNodeDimensions(TRUE, style.name="wp.vis")
+RCy3::setNodeShapeMapping('type', c('gene','pathway','drug'), c("ellipse","rectangle","hexagon"), style.name="wp.vis")
+RCy3::setNodeSizeMapping('type', c('gene','pathway'), c(40,25), mapping.type = "d", style.name = "wp.vis")
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+data.values = c(-1,0,1) 
+setNodeColorMapping("log2FoldChange", data.values, node.colors, default.color = "#99FF99", style.name = "wp.vis")
+
+RCy3::setVisualStyle("wp.vis")
+
+# Saving output
+svg.file <- file.path(getwd(), "figures/PPI-Pathway-Network.svg")
+exportImage(svg.file,'SVG')
+png.file <- file.path(getwd(), "figures/PPI-Pathway-Network.png")
+exportImage(png.file,'PNG', zoom = 500)
+cys.file <- file.path(getwd(), "output/PPI-Pathway-Network.cys")
+saveSession(cys.file) 
+
+#comment following line if you want to manipulate the visualization in Cytoscape
+RCy3::closeSession(save.before.closing = F)
+
+```
