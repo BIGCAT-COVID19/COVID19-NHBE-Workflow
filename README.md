@@ -32,5 +32,7 @@ Drug-target information
 * Alex Pico
 * Chris Evelo
 
+--------------------------------------
 
-
+### Funding
+ZonMw Nr. 10430012010015
