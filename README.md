@@ -4,7 +4,7 @@ Pathway and network analysis workflow using WikiPathways and the COVID19 Disease
 
 ### R workflow
 
-Workflow_PathwayNetworkAnalysis.Rmd
+[Workflow_PathwayNetworkAnalysis.Rmd](https://github.com/BIGCAT-COVID19/COVID19-NHBE-Workflow/blob/main/Workflow_PathwayNetworkAnalysis.Rmd)
 
 --------------------------------------
 
