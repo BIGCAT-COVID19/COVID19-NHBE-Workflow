@@ -109,7 +109,7 @@ bkgd.genes <- unique(data.NHBE[,c(1,2)])
 
 # combine WikiPathways and COVID19 Disease Map gene sets
 wp2gene <- readPathwayGMT("data/wikipathways-20210110-gmt-Homo_sapiens.gmt")
-dm2gene <- readPathwayGMT("data/dm_genesets.gmt")
+dm2gene <- readPathwayGMT("data/COVID19_DiseaseMap_April2021.gmt")
 pwy2gene <- dplyr::bind_rows(wp2gene, dm2gene)
 
 wpid2gene <- pwy2gene %>% dplyr::select(wpid,gene) #TERM2GENE
