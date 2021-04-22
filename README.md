@@ -2,11 +2,13 @@
 
 Pathway and network analysis workflow using WikiPathways and the COVID19 Disease Map.
 
-**R workflow**
+### R workflow
 
 Workflow_PathwayNetworkAnalysis.Rmd
 
-**Data**
+--------------------------------------
+
+### Data
 
 Transcriptomics data
 * NHBE mock treated vs SARS-CoV-2 infected: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE147507
