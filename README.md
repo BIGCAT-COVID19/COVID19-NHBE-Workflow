@@ -19,7 +19,7 @@ Pathway information
 * COVID19 Disease Map
 
 Drug-target information
-* DrugBank ((check license)[https://go.drugbank.com/legal/terms_of_use] if you want to use the drug-target extension!)) 
+* DrugBank ([check license](https://go.drugbank.com/legal/terms_of_use) if you want to use the drug-target extension!)) 
 
 --------------------------------------
 
