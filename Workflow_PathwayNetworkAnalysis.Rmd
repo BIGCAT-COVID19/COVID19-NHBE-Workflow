@@ -4,6 +4,7 @@ author: "Finterly Hu, Martina Summer-Kutmon"
 date: "10 Feb 2021"
 comment: "adapted from Alexander Pico's Pathway Analysis Vignette"
 version: 1.0
+output: html_document
 ---
 
 # General instructions (read before running the code snippets)
@@ -15,7 +16,7 @@ version: 1.0
 
 Loading libraries
 ```{r}
-#options(connectionObserver = NULL)
+options(connectionObserver = NULL)
 
 library(readr)
 library(DESeq2)
