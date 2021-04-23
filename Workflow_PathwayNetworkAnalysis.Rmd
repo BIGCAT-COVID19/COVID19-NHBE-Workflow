@@ -15,6 +15,8 @@ version: 1.0
 
 Loading libraries
 ```{r}
+#options(connectionObserver = NULL)
+
 library(readr)
 library(DESeq2)
 library(here)
@@ -30,11 +32,13 @@ library(EnhancedVolcano)
 library(readr)
 library(reshape)
 library(data.table)
+library(svglite)
 ```
 
 Setup
 ```{r}
-setwd(here())
+path <- here()
+setwd(path)
 ```
 
 
@@ -125,12 +129,30 @@ ewp <- clusterProfiler::enricher(
 
 ewp.res <- as.data.frame(ewp) 
 
+# number of genes measured in pathways
+length(ewp@universe)
+
+# number of DEG in pathways
+length(deg$GeneId[deg$GeneId %in% unique(wp2gene$gene)])
+
 # export enrichment result
-svg('figures/barplot.svg', width = 800, height=1000)
-barplot(ewp, showCategory = 45)
-dev.off()
+#svg('figures/barplot.svg', width = 800, height=1000)
+bplot <- ggplot(ewp[1:47], aes(x=reorder(Description, -pvalue), y=Count)) +
+  geom_bar(stat ="identity", fill="#BA8CD7") +
+  coord_flip() +
+  labs(x="", y="DEG gene count", fill="") +
+  theme(axis.text=element_text(size=10)) + 
+  theme(legend.position="none")
+
+ggsave(file="figures/barplot.svg", plot=bplot, width = 8, height=9)
+#dev.off()
 png('figures/barplot.png', width = 800, height=1000)
-barplot(ewp, showCategory = 45)
+ggplot(ewp[1:47], aes(x=reorder(Description, -pvalue), y=Count)) +
+  geom_bar(stat ="identity", fill="#BA8CD7") +
+  coord_flip() +
+  labs(x="", y="DEG gene count", fill="") +
+  theme(axis.text=element_text(size=12)) + 
+  theme(legend.position="none")
 dev.off()
 
 write.table(ewp.res, file="output/enrich_res.txt", sep="\t", quote=FALSE, row.names = FALSE)
