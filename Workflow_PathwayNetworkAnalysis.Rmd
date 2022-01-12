@@ -34,6 +34,7 @@ library(readr)
 library(reshape)
 library(data.table)
 library(svglite)
+library(xlsx) # for writing out drug target table to excel
 ```
 
 Setup
@@ -300,7 +301,34 @@ my.drugs <- selectNodes("drug", by.col = "CTL.Type", preserve = FALSE)$nodes
 clearSelection()
 setNodeColorBypass(my.drugs, "#DD99FF")
 
+# Create Drug Target Table
+dt <- getTableColumns(
+  columns = c("name","SUID","Identifier", "label","NumTargets",	"Group", "Category")
+  )
+# find first neighbor drug targets 
+dt.target <- rbindlist(
+  getFirstNeighbors(
+    node.names=my.drugs,
+    as.nested.list=TRUE
+    )
+  )
+colnames(dt.target) <- c("SUID", "target")
+dt.target$Targets <- dt[match(paste(dt.target$target),paste(dt$name)),"label"]
+dt.target <- aggregate(Targets ~ SUID, data = dt.target, paste, collapse = ", ")
+# count NumTargets(DEG)
+dt.target$NumTargets_DEG <- sapply(strsplit(dt.target$Targets,','), uniqueN)
+my.table <- dt[!is.na(dt$Identifier),]
+my.table$NumTargets_DEG<-dt.target[match(paste(my.table$SUID),paste(dt.target$SUID)),"NumTargets_DEG"]
+my.table$Targets<-dt.target[match(paste(my.table$SUID),paste(dt.target$SUID)),"Targets"]
+# final table 
+final.table<- my.table[,c(3,4,5,8,9,6,7)]
+names(final.table)[names(final.table) == 'NumTargets'] <- 'NumTargets_DrugBank'
+names(final.table)[names(final.table) == 'label'] <- 'Label'
+final.table$Category[final.table$Category == 0] <- ""
+
 # Saving output
+xls.file <- file.path(getwd(), "output/DrugTargetTable.xlsx")
+write.xlsx(final.table, xls.file)
 svg.file <- file.path(getwd(), "figures/DrugExtension.svg")
 exportImage(svg.file,'SVG')
 png.file <- file.path(getwd(), "figures/DrugExtension.png")
